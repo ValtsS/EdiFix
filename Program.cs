@@ -54,95 +54,14 @@ namespace EdiFix
 
 
             var ALLQso = data.SelectMany(x => x.Value.log.QSORecords).ToArray();
-            Array.Sort(ALLQso, (a,b)  => a.Time.CompareTo(b.Time) );
+            Array.Sort(ALLQso, (a, b) => a.Time.CompareTo(b.Time));
 
             LinkedList<QSORecord> q = new LinkedList<QSORecord>();
             Dictionary<string, HashSet<LinkedListNode<QSORecord>>> counter = new();
 
-            List<PatchMulti> patch = new List<PatchMulti>();
             Dictionary<string, string[]> TrueWWL = data.ToDictionary(x => x.Value.log.Call, x => new string[] { x.Value.log.PWWLo });
 
-
-            foreach(var newQso in ALLQso)
-            {
-
-                var added = q.AddLast(newQso);
-                var addedId = added.Value.GetID();
-                var reverse = added.Value.GetIDReverse();
-
-                if (!counter.ContainsKey(addedId))
-                    counter[addedId] = new();
-
-                counter[addedId].Add(added);
-
-                if (TrueWWL.TryGetValue(added.Value.Callsign, out string[] recWWL) && !recWWL.Contains(added.Value.ReceivedWWL))
-                {
-                    patch.Add(new PatchMulti()
-                    {
-                        callsign = added.Value.Callsign,
-                        line = added.Value.LineNumber,
-                        CallsignReportToPatch = added.Value.OpCallsign,
-                        WWL = recWWL[0]
-                    });
-                }
-
-
-                while (q.Count > 0 && (q.Last.Value.Time - q.First.Value.Time) > TimeSpan.FromMinutes(thresholdMinutes) )
-                {
-                    var first = q.First;
-                    counter[first.Value.GetID()].Remove(first);
-                    q.RemoveFirst();
-                }
-
-
-                if (counter.TryGetValue(reverse, out var nodes) && nodes.Count > 0)
-                {
-
-//                    Console.WriteLine(string.Join("\n", nodes.Select(x => $"{added.Value.Time} {added.Value.OpCallsign} {added.Value.Callsign}  {added.Value.SentRST}  {added.Value.ReceivedRST} @ {added.Value.LineNumber}")));
-
-                    var Sent = added.Value.SentRST;
-                    var Rec = added.Value.ReceivedRST;
-
-                    foreach(var qso in nodes)
-                    {
-
-                        if (qso.Value.OpCallsign != added.Value.Callsign)
-                            throw new Exception("logic broken, should not happen");
-
-
-                        if (qso.Value.SentRST != added.Value.ReceivedRST)
-                        {
-                            patch.Add(new PatchMulti()
-                            {
-                                callsign = added.Value.Callsign,
-                                line = added.Value.LineNumber,
-                                recRST = qso.Value.SentRST,
-                                CallsignReportToPatch = added.Value.OpCallsign
-                            });
-                        }
-
-                        if (qso.Value.ReceivedRST != added.Value.SentRST)
-                        {
-                            patch.Add(new PatchMulti()
-                            {
-                                callsign = qso.Value.Callsign,
-                                line = qso.Value.LineNumber,
-                                recRST = added.Value.SentRST,
-                                CallsignReportToPatch = qso.Value.OpCallsign
-                            });
-                        }
-
-
-                    }
-
-                 //   Console.WriteLine(string.Join("\n", nodes.Select(x => $"{x.Value.Time} {x.Value.OpCallsign} {x.Value.Callsign}  {x.Value.SentRST}  {x.Value.ReceivedRST} @ {x.Value.LineNumber}")));
-
-
-                }
-
-
-            }
-
+            var patch = preparePatches(ALLQso, q, counter, TrueWWL);
 
             Console.WriteLine($"{patch.Count} RST/WWL should be fixed");
 
@@ -152,7 +71,7 @@ namespace EdiFix
 
             HashSet<string> ToSave = new();
 
-            foreach(var p in patch)
+            foreach (var p in patch)
             {
 
                 var filenName = files[p.CallsignReportToPatch];
@@ -203,6 +122,92 @@ namespace EdiFix
             else Console.WriteLine("No changes required");
 
 
+
+        }
+
+        private static List<PatchMulti> preparePatches(QSORecord[] ALLQso, LinkedList<QSORecord> q, Dictionary<string, HashSet<LinkedListNode<QSORecord>>> counter, Dictionary<string, string[]> TrueWWL)
+        {
+            List<PatchMulti> patch = new();
+
+            foreach (var newQso in ALLQso)
+            {
+
+                var added = q.AddLast(newQso);
+                var addedId = added.Value.GetID();
+                var reverse = added.Value.GetIDReverse();
+
+                if (!counter.ContainsKey(addedId))
+                    counter[addedId] = new();
+
+                counter[addedId].Add(added);
+
+                if (TrueWWL.TryGetValue(added.Value.Callsign, out string[] recWWL) && !recWWL.Contains(added.Value.ReceivedWWL))
+                {
+                    patch.Add(new PatchMulti()
+                    {
+                        callsign = added.Value.Callsign,
+                        line = added.Value.LineNumber,
+                        CallsignReportToPatch = added.Value.OpCallsign,
+                        WWL = recWWL[0]
+                    });
+                }
+
+
+                while (q.Count > 0 && (q.Last.Value.Time - q.First.Value.Time) > TimeSpan.FromMinutes(thresholdMinutes))
+                {
+                    var first = q.First;
+                    counter[first.Value.GetID()].Remove(first);
+                    q.RemoveFirst();
+                }
+
+
+                if (counter.TryGetValue(reverse, out var nodes) && nodes.Count > 0)
+                {
+
+                    //                    Console.WriteLine(string.Join("\n", nodes.Select(x => $"{added.Value.Time} {added.Value.OpCallsign} {added.Value.Callsign}  {added.Value.SentRST}  {added.Value.ReceivedRST} @ {added.Value.LineNumber}")));
+
+                    var Sent = added.Value.SentRST;
+                    var Rec = added.Value.ReceivedRST;
+
+                    foreach (var qso in nodes)
+                    {
+
+                        if (qso.Value.OpCallsign != added.Value.Callsign)
+                            throw new Exception("logic broken, should not happen");
+
+
+                        if (qso.Value.SentRST != added.Value.ReceivedRST)
+                        {
+                            patch.Add(new PatchMulti()
+                            {
+                                callsign = added.Value.Callsign,
+                                line = added.Value.LineNumber,
+                                recRST = qso.Value.SentRST,
+                                CallsignReportToPatch = added.Value.OpCallsign
+                            });
+                        }
+
+                        if (qso.Value.ReceivedRST != added.Value.SentRST)
+                        {
+                            patch.Add(new PatchMulti()
+                            {
+                                callsign = qso.Value.Callsign,
+                                line = qso.Value.LineNumber,
+                                recRST = added.Value.SentRST,
+                                CallsignReportToPatch = qso.Value.OpCallsign
+                            });
+                        }
+
+
+                    }
+
+                    //   Console.WriteLine(string.Join("\n", nodes.Select(x => $"{x.Value.Time} {x.Value.OpCallsign} {x.Value.Callsign}  {x.Value.SentRST}  {x.Value.ReceivedRST} @ {x.Value.LineNumber}")));
+
+
+                }
+            }
+
+            return patch;
 
         }
     }
