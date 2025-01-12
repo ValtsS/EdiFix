@@ -26,7 +26,7 @@ namespace EdiFix
             public string callsign;
             public int line;
 
-            public string oppositeCall;
+            public string CallsignReportToPatch;
 
             public string? recRST;
             public string? WWL;
@@ -101,8 +101,8 @@ namespace EdiFix
                         {
                             patch.Add(new PatchMulti() {
                                 callsign = added.Value.OpCallsign,
-                                line = added.Value.LineNumber,
-                                oppositeCall = added.Value.Callsign,
+                                line = qso.Value.LineNumber,
+                                CallsignReportToPatch = added.Value.Callsign,
                                 WWL = recWWL[0]
                             });
                         }
@@ -115,7 +115,7 @@ namespace EdiFix
                                 callsign = added.Value.Callsign,
                                 line = added.Value.LineNumber,
                                 recRST = qso.Value.SentRST,
-                                oppositeCall = added.Value.OpCallsign
+                                CallsignReportToPatch = added.Value.OpCallsign
                             });
                         }
 
@@ -126,7 +126,7 @@ namespace EdiFix
                                 callsign = qso.Value.Callsign,
                                 line = qso.Value.LineNumber,
                                 recRST = added.Value.SentRST,
-                                oppositeCall = qso.Value.OpCallsign
+                                CallsignReportToPatch = qso.Value.OpCallsign
                             });
                         }
 
@@ -153,7 +153,7 @@ namespace EdiFix
             foreach(var p in patch)
             {
 
-                var filenName = files[p.oppositeCall];
+                var filenName = files[p.CallsignReportToPatch];
                 var entry = data[filenName];
 
                 var currLine = entry.lines[p.line];
@@ -161,7 +161,7 @@ namespace EdiFix
                 var splitted = currLine.Split(';');
 
                 if (splitted[2] != p.callsign)
-                    throw new Exception($"Did not find {p.oppositeCall} in {filenName}");
+                    throw new Exception($"Did not find {p.CallsignReportToPatch} in {filenName}");
 
                 // fix Rec RST
                 if (!string.IsNullOrEmpty(p.recRST))
