@@ -75,6 +75,18 @@ namespace EdiFix
 
                 counter[addedId].Add(added);
 
+                if (TrueWWL.TryGetValue(added.Value.Callsign, out string[] recWWL) && !recWWL.Contains(added.Value.ReceivedWWL))
+                {
+                    patch.Add(new PatchMulti()
+                    {
+                        callsign = added.Value.Callsign,
+                        line = added.Value.LineNumber,
+                        CallsignReportToPatch = added.Value.OpCallsign,
+                        WWL = recWWL[0]
+                    });
+                }
+
+
                 while (q.Count > 0 && (q.Last.Value.Time - q.First.Value.Time) > TimeSpan.FromMinutes(thresholdMinutes) )
                 {
                     var first = q.First;
@@ -96,16 +108,6 @@ namespace EdiFix
 
                         if (qso.Value.OpCallsign != added.Value.Callsign)
                             throw new Exception("logic broken, should not happen");
-
-                        if (TrueWWL.TryGetValue(qso.Value.Callsign, out string[] recWWL) && !recWWL.Contains(qso.Value.ReceivedWWL) )
-                        {
-                            patch.Add(new PatchMulti() {
-                                callsign = added.Value.OpCallsign,
-                                line = qso.Value.LineNumber,
-                                CallsignReportToPatch = added.Value.Callsign,
-                                WWL = recWWL[0]
-                            });
-                        }
 
 
                         if (qso.Value.SentRST != added.Value.ReceivedRST)
