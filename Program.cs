@@ -30,11 +30,108 @@ namespace EdiFix
 
             public string? recRST;
             public string? WWL;
+            public string? Comment;
+        }
+
+        class TrueWWL
+        {
+            public string WWL;
+            public string Comment;
+        }
+
+
+        class WWLx
+        {
+            public string callsign;
+            public string SelfReported;
+            public string External;
+            public Dictionary<string, int> H = new();
+            public HashSet<string> relatedCallsigns = new();
+
+            public void OtherReport(string wwl, string callsign)
+            {
+                if (!H.TryAdd(wwl, 1))
+                    H[wwl]++;
+
+                relatedCallsigns.Add(callsign);
+            }
+
+            public void Log()
+            {
+                Console.WriteLine($"Callsign: {callsign}  ActualWWL: {SelfReported} \t  External: {External}");
+                Console.WriteLine($"\t{string.Join(",", H.Keys)}");
+            }
+
+            public string Truth(out string comment)
+            {
+                if (!string.IsNullOrEmpty(SelfReported))
+                {
+                    comment = "99% self reported";
+                    return SelfReported;
+                }
+
+                var sorted = H.OrderByDescending(x => x.Value).ToArray();
+
+                if (sorted.Length > 0)
+                {
+                    var firstCount = sorted[0].Value;
+                    var truths = sorted.Where(x => x.Value == firstCount).Select(x => x.Key).ToHashSet();
+
+                    if (truths.Count == 1)
+                    {
+                        comment = "";
+                        foreach(var c in sorted)
+                        {
+                            comment += $"\t{c.Key} was reported {c.Value} times\n";
+                        }
+
+                        return truths.First();
+                    }
+
+                    if (truths.Contains(External))
+                    {
+                        comment = "CALL3 data, re-check";
+                        return External;
+                    }
+
+
+
+                }
+                comment = null;
+                return null;
+            }
+
+        }
+
+        static Dictionary<string, WWLx> wwls = new();
+        static Call3 call3;
+
+        static WWLx getForWWL(string callsign)
+        {
+            if (wwls.TryGetValue(callsign, out WWLx found))
+                return found;
+
+            found = new WWLx();
+            wwls[callsign] = found;
+            wwls[callsign].callsign = callsign;
+            return found;
         }
 
 
         static void Main(string[] args)
         {
+
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            string filePath = Path.Combine(baseDir, "call3.txt");
+
+            if (!File.Exists(filePath))
+            {
+                throw new FileNotFoundException("Call3.txt File not found.", filePath);
+            }
+
+            call3 = new Call3();
+            call3.Load(filePath);
+
             IEnumerable<String> matchingFilePaths2 = System.IO.Directory.EnumerateFiles(pwd(), "*.edi", System.IO.SearchOption.TopDirectoryOnly);
 
 
@@ -59,11 +156,12 @@ namespace EdiFix
             LinkedList<QSORecord> q = new LinkedList<QSORecord>();
             Dictionary<string, HashSet<LinkedListNode<QSORecord>>> counter = new();
 
-            Dictionary<string, string[]> TrueWWL = data.ToDictionary(x => x.Value.log.Call, x => new string[] { x.Value.log.PWWLo });
+            Dictionary<string, TrueWWL> WWLTruth = prepareTrueWWLs(ALLQso);
 
-            var patch = preparePatches(ALLQso, q, counter, TrueWWL);
+            List<PatchMulti> patch = preparePatches(ALLQso, q, counter, WWLTruth);
 
             Console.WriteLine($"{patch.Count} RST/WWL should be fixed");
+
 
 
             var files = data.ToDictionary(x => x.Value.log.Call, x => x.Key);
@@ -94,6 +192,7 @@ namespace EdiFix
                 var newStuff = string.Join(";", splitted);
 
                 Console.WriteLine($"{filenName} : \n\t{entry.lines[p.line]}\n\t{newStuff}\n\n");
+                Console.WriteLine(p.Comment);
 
                 entry.lines[p.line] = newStuff;
 
@@ -125,7 +224,45 @@ namespace EdiFix
 
         }
 
-        private static List<PatchMulti> preparePatches(QSORecord[] ALLQso, LinkedList<QSORecord> q, Dictionary<string, HashSet<LinkedListNode<QSORecord>>> counter, Dictionary<string, string[]> TrueWWL)
+        private static Dictionary<string, TrueWWL> prepareTrueWWLs(QSORecord[] ALLQso)
+        {
+            foreach (var qso in ALLQso)
+            {
+                var opWWLrecord = getForWWL(qso.OpCallsign);
+                if (string.IsNullOrEmpty(opWWLrecord.External))
+                    opWWLrecord.External = call3.GetGridSquare(qso.OpCallsign);
+
+                opWWLrecord.SelfReported = qso.OpWWL;
+                opWWLrecord.relatedCallsigns.Add(qso.OpCallsign);
+                opWWLrecord.OtherReport(qso.OpWWL, qso.OpCallsign);
+
+                var WWLrecord = getForWWL(qso.Callsign);
+                if (string.IsNullOrEmpty(WWLrecord.External))
+                    WWLrecord.External = call3.GetGridSquare(qso.Callsign);
+
+                WWLrecord.OtherReport(qso.ReceivedWWL, qso.Callsign);
+            }
+
+
+            Dictionary<string, TrueWWL> WWLTruth = new();
+            foreach (var kv in wwls)
+            {
+             //   kv.Value.Log();
+
+                var candidate = kv.Value.Truth(out string comment);
+                if (!string.IsNullOrEmpty(candidate))
+                    WWLTruth[kv.Key] = new TrueWWL()
+                    {
+                        WWL = candidate,
+                        Comment = comment
+                    };
+
+            }
+
+            return WWLTruth;
+        }
+
+        private static List<PatchMulti> preparePatches(QSORecord[] ALLQso, LinkedList<QSORecord> q, Dictionary<string, HashSet<LinkedListNode<QSORecord>>> counter, Dictionary<string, TrueWWL> TrueWWL)
         {
             List<PatchMulti> patch = new();
 
@@ -141,14 +278,16 @@ namespace EdiFix
 
                 counter[addedId].Add(added);
 
-                if (TrueWWL.TryGetValue(added.Value.Callsign, out string[] recWWL) && !recWWL.Contains(added.Value.ReceivedWWL))
+                if (TrueWWL.TryGetValue(added.Value.Callsign, out TrueWWL trueWWL) && trueWWL.WWL != added.Value.ReceivedWWL)
                 {
                     patch.Add(new PatchMulti()
                     {
                         callsign = added.Value.Callsign,
                         line = added.Value.LineNumber,
                         CallsignReportToPatch = added.Value.OpCallsign,
-                        WWL = recWWL[0]
+                        WWL = trueWWL.WWL,
+                        Comment = trueWWL.Comment,
+
                     });
                 }
 
