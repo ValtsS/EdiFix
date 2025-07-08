@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using ylac_judge.contract;
 using ylac_judge.import;
 
@@ -59,7 +60,7 @@ namespace EdiFix
             public void Log()
             {
                 Console.WriteLine($"Callsign: {callsign}  ActualWWL: {SelfReported} \t  External: {External}");
-                Console.WriteLine($"\t{string.Join(",", H.Keys)}");
+                Console.WriteLine($"\t{string.Join(",", H.Select(kv => $"{kv.Key} ({kv.Value})"))}");
             }
 
             public string Truth(out string comment)
@@ -70,19 +71,27 @@ namespace EdiFix
                     return SelfReported;
                 }
 
-                var sorted = H.OrderByDescending(x => x.Value).ToArray();
+                var sorted = H.Where(x => x.Key.Length == 6).OrderByDescending(x => x.Value).ToArray();
 
                 if (sorted.Length > 0)
                 {
                     var firstCount = sorted[0].Value;
                     var truths = sorted.Where(x => x.Value == firstCount).Select(x => x.Key).ToHashSet();
 
-                    if (truths.Count == 1)
+                    if (truths.Count == 1 && truths.First().Length == 6)
                     {
                         comment = "";
                         foreach(var c in sorted)
                         {
                             comment += $"\t{c.Key} was reported {c.Value} times\n";
+                        }
+
+                        if (!string.IsNullOrEmpty(External) && truths.First() != External &&
+                            (External.Length >4 || External.Substring(0, 4) != truths.First().Substring(0, 4)))
+                        {
+                            var distance = MaidenheadLocatorUtils.DistanceBetweenLocators(truths.First(), External);
+                            if (distance > 30 && sorted[0].Value == 1 )
+                                return null;
                         }
 
                         return truths.First();
@@ -97,6 +106,7 @@ namespace EdiFix
 
 
                 }
+
                 comment = null;
                 return null;
             }
@@ -114,6 +124,7 @@ namespace EdiFix
             found = new WWLx();
             wwls[callsign] = found;
             wwls[callsign].callsign = callsign;
+            wwls[callsign].External = call3.GetGridSquare(callsign);
             return found;
         }
 
@@ -135,6 +146,15 @@ namespace EdiFix
             IEnumerable<String> matchingFilePaths2 = System.IO.Directory.EnumerateFiles(pwd(), "*.edi", System.IO.SearchOption.TopDirectoryOnly);
 
 
+            var badFileNames = matchingFilePaths2.Select(f => Path.GetFileName(f)).Where(f => !f.All(c => c <= 127)).ToArray();
+
+            if (badFileNames.Length > 0)
+            {
+                Console.WriteLine(string.Join("\n", badFileNames));
+                throw new Exception("Detected filename with non ascii characters");
+            }
+
+
             var loader = new EdiLoader();
 
             ConcurrentDictionary<string, Data> data = new();
@@ -149,6 +169,7 @@ namespace EdiFix
 
             Console.WriteLine($"Loaded {data.Count} files");
 
+            CheckBands(data);
 
             var ALLQso = data.SelectMany(x => x.Value.log.QSORecords).ToArray();
             Array.Sort(ALLQso, (a, b) => a.Time.CompareTo(b.Time));
@@ -191,7 +212,7 @@ namespace EdiFix
 
                 var newStuff = string.Join(";", splitted);
 
-                Console.WriteLine($"{filenName} : \n\t{entry.lines[p.line]}\n\t{newStuff}\n\n");
+                Console.WriteLine($"{filenName} : \n\t{entry.lines[p.line]}\n\t{newStuff}\n");
                 Console.WriteLine(p.Comment);
 
                 entry.lines[p.line] = newStuff;
@@ -224,22 +245,67 @@ namespace EdiFix
 
         }
 
+        private static void CheckBands(ConcurrentDictionary<string, Data> data)
+        {
+            var bands = data.Values.Select(v => v.log.Band).Where(v => v.HasValue).Select(v => v.Value).GroupBy(w => w).ToDictionary(g => g.Key, g => g.Count());
+
+            if (bands.Count > 1)
+            {
+                foreach (var kvp in bands)
+                {
+                    Console.WriteLine($"{kvp.Key}: {kvp.Value}");
+                }
+                throw new Exception($"Band data is mixed/wrong");
+            }
+        }
+        private static string SelectSquare(string[] options)
+        {
+            Console.WriteLine("\nSelect the grid or enter correct one: ");
+
+            for (int i = 0; i < options.Length; i++)
+            {
+                var prfx = call3.GetPrefixes6(options[i]);
+                Console.WriteLine($"[{i + 1}] {options[i]} ({string.Join(" ", prfx)}...)");
+            }
+            var good = false;
+            while (!good)
+            {
+                Console.Write("\n?=");
+                var line = Console.ReadLine();
+                if (int.TryParse(line.Trim(), out int idx) && idx >= 1 && idx <= options.Length)
+                {
+                    return options[idx - 1];
+                }
+
+                good = MaidenheadLocatorUtils.IsValidMaidenhead6(line.Trim());
+                if (good)
+                {
+                    return line.Trim();
+                }
+                else
+                    Console.WriteLine($"\nDid not seem right...");
+
+            }
+
+            return null;
+
+        }
+
         private static Dictionary<string, TrueWWL> prepareTrueWWLs(QSORecord[] ALLQso)
         {
+            var needHelp = false;
+
             foreach (var qso in ALLQso)
             {
+
                 var opWWLrecord = getForWWL(qso.OpCallsign);
-                if (string.IsNullOrEmpty(opWWLrecord.External))
-                    opWWLrecord.External = call3.GetGridSquare(qso.OpCallsign);
 
                 opWWLrecord.SelfReported = qso.OpWWL;
                 opWWLrecord.relatedCallsigns.Add(qso.OpCallsign);
                 opWWLrecord.OtherReport(qso.OpWWL, qso.OpCallsign);
 
-                var WWLrecord = getForWWL(qso.Callsign);
-                if (string.IsNullOrEmpty(WWLrecord.External))
-                    WWLrecord.External = call3.GetGridSquare(qso.Callsign);
 
+                var WWLrecord = getForWWL(qso.Callsign);
                 WWLrecord.OtherReport(qso.ReceivedWWL, qso.Callsign);
             }
 
@@ -247,17 +313,29 @@ namespace EdiFix
             Dictionary<string, TrueWWL> WWLTruth = new();
             foreach (var kv in wwls)
             {
-             //   kv.Value.Log();
-
                 var candidate = kv.Value.Truth(out string comment);
+
+                if (candidate == null)
+                {
+                    kv.Value.Log();
+                    candidate = SelectSquare(kv.Value.H.Keys.ToArray());
+                }
+
                 if (!string.IsNullOrEmpty(candidate))
+                {
                     WWLTruth[kv.Key] = new TrueWWL()
                     {
                         WWL = candidate,
                         Comment = comment
                     };
+                }
+                else
+                    needHelp = true;
 
             }
+
+            if (needHelp)
+                throw new Exception($"Could not determine thruth...");
 
             return WWLTruth;
         }
@@ -266,6 +344,24 @@ namespace EdiFix
         {
             List<PatchMulti> patch = new();
 
+            // Patch WWLs
+            foreach (var newQso in ALLQso)
+            {
+
+                if (TrueWWL.TryGetValue(newQso.Callsign, out TrueWWL trueWWL) && trueWWL.WWL != newQso.ReceivedWWL)
+                {
+                    patch.Add(new PatchMulti()
+                    {
+                        callsign = newQso.Callsign,
+                        line = newQso.LineNumber,
+                        CallsignReportToPatch = newQso.OpCallsign,
+                        WWL = trueWWL.WWL,
+                        Comment = trueWWL.Comment,
+                    });
+                }
+            }
+
+            // Patch Signal reports
             foreach (var newQso in ALLQso)
             {
 
@@ -277,19 +373,6 @@ namespace EdiFix
                     counter[addedId] = new();
 
                 counter[addedId].Add(added);
-
-                if (TrueWWL.TryGetValue(added.Value.Callsign, out TrueWWL trueWWL) && trueWWL.WWL != added.Value.ReceivedWWL)
-                {
-                    patch.Add(new PatchMulti()
-                    {
-                        callsign = added.Value.Callsign,
-                        line = added.Value.LineNumber,
-                        CallsignReportToPatch = added.Value.OpCallsign,
-                        WWL = trueWWL.WWL,
-                        Comment = trueWWL.Comment,
-
-                    });
-                }
 
 
                 while (q.Count > 0 && (q.Last.Value.Time - q.First.Value.Time) > TimeSpan.FromMinutes(thresholdMinutes))
