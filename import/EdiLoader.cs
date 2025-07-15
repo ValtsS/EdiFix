@@ -178,9 +178,16 @@ namespace ylac_judge.import
 
         public SubmittedLog LoadFromFile(string filename)
         {
-            using (FileStream fileStream = new FileStream(filename, FileMode.Open, FileAccess.Read))
+            try
             {
-                return Load(fileStream);
+                using (FileStream fileStream = new FileStream(filename, FileMode.Open, FileAccess.Read))
+                {
+                    return Load(fileStream);
+                }
+            }
+            catch (Exception e)
+            {
+                throw new AggregateException($"{filename} failed to load", e);
             }
         }
 
@@ -217,7 +224,7 @@ namespace ylac_judge.import
             log.Band = ediParms.getBand();
             log.Call = ediParms.getCallsign();
             log.PWWLo = ediParms.getSpecific("PWWLo").ToUpper();
-            log.PExch = ediParms.getSpecific("PExch").ToUpper();
+            log.PExch = ediParms.getSpecific("PExch")?.ToUpper();
 
             log.QSORecords = RawQSOs.Select(x => parseQSO(log, x.Item1, x.Item2)).ToArray();
 
