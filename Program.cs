@@ -315,7 +315,7 @@ namespace EdiFix
             {
                 var candidate = kv.Value.Truth(out string comment);
 
-                if (candidate == null)
+                if (candidate == null || comment.Contains("CALL3"))
                 {
                     kv.Value.Log();
                     candidate = SelectSquare(kv.Value.H.Keys.ToArray());
