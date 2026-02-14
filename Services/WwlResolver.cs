@@ -40,7 +40,7 @@ namespace EdiFix.Services
                 opTracker.OtherReport(qso.OpWWL, qso.OpCallsign);
 
                 var targetTracker = GetTracker(qso.Callsign);
-                targetTracker.OtherReport(qso.ReceivedWWL, qso.Callsign);
+                targetTracker.OtherReport(qso.ReceivedWWL, qso.OpCallsign);
             }
 
             var truths = new Dictionary<string, WwlTruth>();
@@ -53,7 +53,7 @@ namespace EdiFix.Services
                 if (candidate == null || (comment != null && comment.Contains("CALL3")))
                 {
                     kv.Value.Log();
-                    candidate = SelectSquare(kv.Value.H.Keys.ToArray(), kv.Value.External);
+                    candidate = SelectSquare(kv.Value.H, kv.Value.External);
                 }
 
                 if (!string.IsNullOrEmpty(candidate))
@@ -96,33 +96,36 @@ namespace EdiFix.Services
             return patches;
         }
 
-        private string SelectSquare(string[] options, string? external)
+        private string SelectSquare(Dictionary<string, HashSet<string>> options, string? external)
         {
+            var keys = options.Keys.ToArray();
             Console.WriteLine("\nSelect the grid or enter correct one: ");
             if (!string.IsNullOrEmpty(external))
             {
                 Console.WriteLine($"[External (call3.txt)]: {external}");
             }
 
-            for (int i = 0; i < options.Length; i++)
+            for (int i = 0; i < keys.Length; i++)
             {
-                var prfx = _call3.GetPrefixes6(options[i]);
+                var key = keys[i];
+                var prfx = _call3.GetPrefixes6(key);
                 string distanceInfo = "";
-                if (!string.IsNullOrEmpty(external) && MaidenheadLocatorUtils.IsValidMaidenhead6(options[i]) && MaidenheadLocatorUtils.IsValidMaidenhead6(external))
+                if (!string.IsNullOrEmpty(external) && MaidenheadLocatorUtils.IsValidMaidenhead6(key) && MaidenheadLocatorUtils.IsValidMaidenhead6(external))
                 {
-                    var dist = MaidenheadLocatorUtils.DistanceBetweenLocators(options[i], external);
+                    var dist = MaidenheadLocatorUtils.DistanceBetweenLocators(key, external);
                     distanceInfo = $" - {dist:F1} km from external";
                 }
-                Console.WriteLine($"[{i + 1}] {options[i]} ({string.Join(" ", prfx)}...){distanceInfo}");
+                var reporters = string.Join(", ", options[key]);
+                Console.WriteLine($"[{i + 1}] {key} ({string.Join(" ", prfx)}...){distanceInfo} reported by: {reporters}");
             }
 
             while (true)
             {
                 Console.Write("\n?=");
                 var line = Console.ReadLine()?.Trim();
-                if (int.TryParse(line, out int idx) && idx >= 1 && idx <= options.Length)
+                if (int.TryParse(line, out int idx) && idx >= 1 && idx <= keys.Length)
                 {
-                    return options[idx - 1];
+                    return keys[idx - 1];
                 }
 
                 if (!string.IsNullOrEmpty(line) && MaidenheadLocatorUtils.IsValidMaidenhead6(line))
